@@ -19,9 +19,29 @@ def run_agent(question, provider, tools, max_steps=6):
     trace = []
     usage = []
 
+    def fail(step, error, message):
+        trace.append({'event': 'error', 'step': step,
+                      'error': error, 'message': message})
+        return {'status': 'error', 'answer': '', 'trace': trace,
+                'usage': usage, 'error': message}
+
+    if type(max_steps) is not int or max_steps < 1:
+        return fail(0, 'INVALID_MAX_STEPS', 'max_steps phải là integer >= 1.')
+
     # Một step là một lần gọi model, có thể chứa nhiều tool calls.
     for step in range(1, max_steps + 1):
-        response = provider.complete(messages, SCHEMAS)
+        try:
+            response = provider.complete(messages, SCHEMAS)
+        except Exception as exc:
+            # Không ghi nguyên văn exception: có thể chứa key hoặc request data.
+            return fail(step, 'PROVIDER_ERROR',
+                        f'Không gọi được model ({type(exc).__name__}); kiểm tra kết nối và cấu hình provider.')
+
+        if (not isinstance(response, dict)
+                or not isinstance(response.get('message'), dict)
+                or not isinstance(response.get('calls'), list)
+                or not isinstance(response.get('finish'), str)):
+            return fail(step, 'INVALID_RESPONSE', 'Provider trả response không đúng contract.')
         message = response['message']
         calls = response['calls']
         finish = response['finish']
@@ -30,19 +50,41 @@ def run_agent(question, provider, tools, max_steps=6):
         trace.append({'event': 'model', 'step': step, 'finish': finish})
 
         if finish not in ('stop', 'tool_calls'):
-            return {'status': 'error', 'answer': '', 'trace': trace,
-                    'usage': usage, 'error': f'Model dừng bất thường: {finish}'}
+            return fail(step, 'MODEL_STOP_ERROR', f'Model dừng bất thường: {finish}')
+
+        if message.get('role') != 'assistant' or not isinstance(message.get('content', ''), (str, type(None))):
+            return fail(step, 'INVALID_RESPONSE', 'Assistant message không đúng contract.')
 
         if calls:
+            # Kiểm tra cả batch trước khi thực thi để tránh bỏ dở các call.
+            if any(not isinstance(call, dict)
+                   or not isinstance(call.get('id'), str) or not call['id']
+                   or not isinstance(call.get('name'), str) or not call['name']
+                   for call in calls):
+                return fail(step, 'INVALID_RESPONSE', 'Tool call thiếu ID hoặc tên hợp lệ.')
+            if len({call['id'] for call in calls}) != len(calls):
+                return fail(step, 'INVALID_RESPONSE', 'Tool call IDs bị trùng trong response.')
             for call in calls:
-                arguments = call['arguments']
+                arguments = call.get('arguments')
                 try:
+                    if not isinstance(arguments, str):
+                        raise ValueError('Arguments phải là JSON string.')
                     arguments = json.loads(arguments)
+                    if not isinstance(arguments, dict):
+                        raise ValueError('Arguments phải là JSON object.')
                 except (ValueError, TypeError):
                     result = {'ok': False, 'error': 'INVALID_ARGUMENTS',
-                              'message': 'Arguments không phải JSON hợp lệ.'}
+                              'message': 'Arguments phải là chuỗi JSON chứa một object.'}
                 else:
-                    result = tools.execute(call['name'], arguments)
+                    try:
+                        result = tools.execute(call['name'], arguments)
+                        if not isinstance(result, dict):
+                            raise TypeError('Tool result phải là dict.')
+                        json.dumps(result, ensure_ascii=False)
+                    except Exception as exc:
+                        # Lỗi tool là observation; model vẫn được cơ hội xử lý tiếp.
+                        result = {'ok': False, 'error': type(exc).__name__,
+                                  'message': 'Không thực thi được tool; chưa có dữ liệu để xác nhận trạng thái.'}
 
                 trace.append({'event': 'tool', 'step': step,
                               'name': call['name'], 'arguments': arguments,
@@ -56,7 +98,7 @@ def run_agent(question, provider, tools, max_steps=6):
             return {'status': 'completed', 'answer': message.get('content') or '',
                     'trace': trace, 'usage': usage}
 
-        return {'status': 'error', 'answer': '', 'trace': trace,
-                'usage': usage, 'error': 'Model báo tool_calls nhưng không có call.'}
+        return fail(step, 'INVALID_RESPONSE', 'Model báo tool_calls nhưng không có call.')
 
+    trace.append({'event': 'max_steps', 'step': max_steps})
     return {'status': 'max_steps', 'answer': '', 'trace': trace, 'usage': usage}
