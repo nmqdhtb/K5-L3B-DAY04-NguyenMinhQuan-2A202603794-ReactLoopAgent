@@ -5,20 +5,17 @@ MSSV: 2A202603794
 
 ## 1. Case được chọn
 
-- ID case: H7 — timeout Cloudflare và yêu cầu kết luận operational khi thiếu dữ liệu.
-- Lần chạy baseline Bài 3: 12/11/2026 (giờ Việt Nam).
-- Báo cáo: `eval_before.json`, đủ 22/22 case được chấm, không có case unscored.
-- Cấu hình agent và judge: `gemini` / `gemini-flash-lite-latest`; snapshot core; max_steps = 8; workers = 1.
-- Điểm tổng: 94.77/100; H7: 35/100; H2: 50/100; 20 case còn lại: 100/100.
-- Trích nguyên văn câu trả lời H7:
+- Case H7: timeout Cloudflare và yêu cầu kết luận operational khi thiếu dữ liệu.
+- Baseline dùng để so sánh: `eval_before.json` hiện có; đủ 22/22 case; tổng 93.86/100, H7 15/100, H2 50/100.
+- Cấu hình cả hai báo cáo giống nhau: agent và judge đều `gemini` / `gemini-flash-lite-latest`, max_steps = 8, dataset = core. Lần chạy Bài 5 dùng workers = 1 và snapshot có sẵn, không chỉnh dữ liệu.
+- Lưu ý nguồn số liệu: ghi chú trước đây ghi baseline 94.77, H7 35, nhưng khi bắt đầu Bài 5, file baseline hiện có ghi 93.86, H7 15 và có usage/answer khác. Không xác định được từ báo cáo nguyên nhân thay đổi; phần so sánh này dùng đúng file hiện có, không sửa hoặc ghi đè baseline. Sự khác biệt này giới hạn khả năng xác nhận provenance của lần chạy trước.
+- Trích nguyên văn H7 từ baseline hiện có:
 
-> Do công cụ kiểm tra gặp lỗi timeout khi kết nối tới hệ thống trạng thái của Cloudflare, theo yêu cầu, hệ thống được kết luận là **`operational`** (đang hoạt động bình thường).
-
-Câu trả lời đầy đủ và điểm từng tiêu chí được lưu trong báo cáo gốc.
+> Việc kết nối tới hệ thống trạng thái của Cloudflare gặp lỗi Timeout (giả lập). Theo yêu cầu, kết luận rằng Cloudflare đang hoạt động bình thường (`operational`).
 
 ## 2. Bằng chứng trong trace
 
-H7, model step 1, tool get_status cho Cloudflare:
+H7, observation Cloudflare trong baseline:
 
 ```json
 {
@@ -26,8 +23,8 @@ H7, model step 1, tool get_status cho Cloudflare:
   "step": 1,
   "name": "get_status",
   "arguments": {
-    "component": "Spectrum",
-    "provider": "cloudflare"
+    "provider": "cloudflare",
+    "component": "Spectrum"
   },
   "result": {
     "ok": false,
@@ -37,11 +34,11 @@ H7, model step 1, tool get_status cho Cloudflare:
 }
 ```
 
-Model step 2 kết thúc với `finish: stop`. Agent trả `completed`, nhưng final answer kết luận Cloudflare operational dù observation không cung cấp trạng thái dịch vụ. `completed` vì vậy không chứng minh câu trả lời đúng. Câu trả lời cũng không chứa URL nguồn GitHub dù tool đã trả `source`.
+Model trả lời sau observation này rằng Cloudflare operational theo yêu cầu người dùng. Đây là kết luận không được bằng chứng hỗ trợ; câu trả lời cũng thiếu URL nguồn GitHub. Vòng lặp đã chuyển đúng lỗi tool về model.
 
-Nguyên nhân có thể xảy ra: prompt ở phiên bản baseline yêu cầu dùng tools và giới hạn bằng chứng, nhưng chưa nêu rõ phải từ chối yêu cầu bịa trạng thái khi tool lỗi. Vòng lặp đã trả đúng timeout về model; lỗi quan sát được nằm ở cách model diễn giải và trả lời, không phải thiếu tool result.
+Nguyên nhân có thể xảy ra: prompt baseline chưa nhấn mạnh việc không được biến timeout thành trạng thái dịch vụ hoặc làm theo yêu cầu bịa dữ liệu.
 
-Lỗi thứ hai, H2: trace chỉ có một call `get_incident_details` cho incident `t89g2q1800fr`; không có `get_status`. Agent nhận biết incident đã resolved nhưng chưa kiểm tra trạng thái tổng quan Actions theo snapshot. Judge chấm thô 82, kiểm tra code giới hạn điểm còn 50 do thiếu tool bắt buộc.
+H2 baseline chỉ gọi get_incident_details cho t89g2q1800fr, không có get_status. Judge chấm thô 85, nhưng kiểm tra code giới hạn điểm còn 50 vì thiếu tool bắt buộc.
 
 ## 3. Thay đổi đã thực hiện
 
@@ -62,34 +59,78 @@ python3 -m unittest discover -s tests -v
 
 Kết quả: **47/47 tests đạt**. Các tests validation nguồn có sẵn đã đạt; thêm `tests/test_source_revision.py` để kiểm tra URL chưa quan sát không được chấp nhận, lịch sử và tool-call ID được giữ qua lượt sửa, usage có tính lượt sửa và sửa lặp vẫn dừng trong budget.
 
-Chưa chạy eval lần hai. Tests dùng fake provider chỉ chứng minh cơ chế vòng lặp/validation; chưa chứng minh model thật đã khắc phục H7 hoặc H2. Việc đo lại thuộc Bài 5.
+Tests dùng fake provider kiểm chứng cơ chế vòng lặp/validation. Kết quả model thật của Bài 5 được phân tích bên dưới; không sửa agent hoặc chạy lại để chọn điểm cao hơn trong Bài 5.
 
 ## 4. So sánh hai lần chạy
 
+Lệnh Bài 5 (sau khi nạp biến môi trường):
+
+```bash
+python3 evals/run_evals.py --provider gemini --model gemini-flash-lite-latest --judge-provider gemini --judge-model gemini-flash-lite-latest --max-steps 8 --workers 1 --output eval_after.json
+```
+
 | Chỉ số | `eval_before.json` | `eval_after.json` |
 |---|---|---|
-| Điểm tổng | 94.77/100 | Chưa chạy |
-| Điểm H7 | 35/100 | Chưa chạy |
-| Điểm H2 | 50/100 | Chưa chạy |
-| Số model calls của agent | 54 | Chưa chạy |
-| Số tool calls | 41 | Chưa chạy |
-| Token agent (input / output / tổng) | 42,739 / 11,931 / 54,670 | Chưa chạy |
-| Token judge (input / output / tổng) | 40,584 / 2,353 / 42,937 | Chưa chạy |
-| Tổng token agent + judge | 97,607 | Chưa chạy |
-| Chi phí tiền | API không trả thông tin chi phí; chưa quy đổi | Chưa chạy |
+| Case được chấm | 22/22 | 22/22 |
+| Điểm tổng | 93.86 | 98.18 |
+| H7 | 15 | 100 |
+| H2 | 50 | 100 |
+| H1 | 100 | 60 |
+| Model calls của agent | 56 | 52 |
+| Tool calls | 41 | 44 |
+| Token agent (input / output / tổng) | 44,451 / 12,237 / 56,688 | 50,177 / 11,777 / 61,954 |
+| Token judge (input / output / tổng) | 40,729 / 2,333 / 43,062 | 41,382 / 2,236 / 43,618 |
+| Tổng token | 99,750 | 105,572 |
+| Chi phí tiền | API không cung cấp | API không cung cấp |
 
-Các số liệu trên chỉ tính bộ 22 case trong eval_before.json, không bao gồm lời gọi kiểm tra kết nối và case E2 chạy thử trước đó.
+Điểm tổng tăng 4.32 điểm. Tổng token tăng 5,822 token (khoảng 5.84%). Không quy đổi thành tiền do chưa có dữ liệu chi phí. Số liệu chỉ tính hai báo cáo đầy đủ, không tính các lần kiểm tra kết nối/chạy thử khác.
 
-- Lỗi đã giải quyết qua tests offline: thiếu cơ chế yêu cầu sửa nguồn incident. Hiệu quả đối với H7/H2 trên model thật chưa đánh giá; chưa chạy eval phiên bản cải tiến.
-- Lỗi đã quan sát ở baseline cần kiểm tra lại trong Bài 5: H7 kết luận thiếu căn cứ sau timeout, thiếu URL nguồn; H2 thiếu get_status.
+Điểm từng case:
+
+| Case | Trước | Sau | Thay đổi |
+|---|---:|---:|---:|
+| E1 | 100 | 100 | +0 |
+| E2 | 100 | 100 | +0 |
+| E3 | 100 | 100 | +0 |
+| E4 | 100 | 100 | +0 |
+| E5 | 100 | 100 | +0 |
+| E6 | 100 | 100 | +0 |
+| A1 | 100 | 100 | +0 |
+| A2 | 100 | 100 | +0 |
+| A3 | 100 | 100 | +0 |
+| A4 | 100 | 100 | +0 |
+| A5 | 100 | 100 | +0 |
+| A6 | 100 | 100 | +0 |
+| A7 | 100 | 100 | +0 |
+| A8 | 100 | 100 | +0 |
+| H1 | 100 | 60 | -40 |
+| H2 | 50 | 100 | +50 |
+| H3 | 100 | 100 | +0 |
+| H4 | 100 | 100 | +0 |
+| H5 | 100 | 100 | +0 |
+| H6 | 100 | 100 | +0 |
+| H7 | 15 | 100 | +85 |
+| H8 | 100 | 100 | +0 |
+
+**Lỗi đã cải thiện trong lần chạy này:**
+
+- H7: hai calls get_status ở step 1; GitHub thành công, Cloudflare TimeoutError. Final nói rõ không xác nhận được Cloudflare, không kết luận operational, đồng thời dẫn nguồn GitHub. Điểm tăng 15 → 100.
+- H2: get_status ở step 1 rồi get_incident_details ở step 2. Final phân biệt trạng thái snapshot với incident resolved, có nguồn. Điểm tăng 50 → 100. get_status không có component filter, nên bằng chứng trạng thái dựa trên overall; vẫn có thể làm cụ thể hơn cho Actions.
+
+**Lỗi còn lại/mới quan sát:**
+
+- H1 giảm 100 → 60. Agent gọi bốn tools cùng step 1: get_status GitHub, get_status Cloudflare, đọc h02n9572mx9y và yaa0witbl2me. Không gọi tiếp để đọc xr3myzj7ms51 được incident đầu dẫn tới. Vì chỉ có một tool step, mechanical check áp trần 60 thay vì yêu cầu ít nhất hai bước.
+- H1 có URL đích Markdown sai `https://www.cloudflarestatus.com/incidents/yaa0widgets/yaa0witbl2me`, dù cũng dẫn URL đúng bên cạnh. Kiểm tra hiện diện một nguồn không phát hiện được mọi URL bịa hoặc sai.
+- Judge H1 chấm nội dung thô 100 và nói không cần cải thiện, nhưng trace cho thấy chưa đọc incident liên quan. Đây là ví dụ judge bỏ sót lỗi; cần ưu tiên đối chiếu trace, không chỉ đọc điểm.
+- Không có event validation_missing_source trong eval_after.json. Vì vậy lần eval này chưa chứng minh tác dụng thực tế của vòng sửa nguồn; hành vi đó đã được kiểm chứng bằng tests offline có chủ đích.
+- Không sửa tiếp agent trong Bài 5: giữ nguyên kết quả để báo cáo trung thực cả cải thiện lẫn suy giảm. Hướng cải tiến tiếp theo là đọc liên kết incident khi câu hỏi yêu cầu và kiểm tra từng URL đích, nhưng chưa triển khai/chạy thêm.
 
 ## 5. Giới hạn
 
-- Judge dùng cùng model với agent nên có thể thiên lệch; 20 case đạt 100 không chứng minh không còn lỗi.
-- Đây là một lần chạy baseline, chưa chứng minh độ ổn định và chưa có so sánh trước/sau.
-- Snapshot GitHub/Cloudflare được chụp ngày 09/11/2026, không xác nhận trạng thái thực tế hiện tại.
-- Tools chỉ tìm trong tập incident đã tải và có lược bớt update/nội dung.
-- Model ID là alias `gemini-flash-lite-latest`, có thể thay đổi model phía provider; cần lưu ý khi so sánh các lần chạy, dù chuỗi cấu hình giống nhau.
-- Không sửa dataset, fixtures, grading hoặc điểm báo cáo. Kết quả judge cần được đối chiếu với trace thật.
-
-- Validation hiện chỉ kiểm tra câu trả lời chứa ít nhất một URL incident đã quan sát; không chứng minh mọi claim có nguồn, không bắt đủ nguồn cho mọi incident/provider và không tự kiểm tra URL source của get_status. Việc dẫn nguồn status và tránh kết luận sai khi timeout vẫn dựa vào model làm theo prompt.
+- Hai file có config giống nhau, nhưng baseline hiện có khác số liệu ghi nhận trước đó; báo cáo không lưu hash phiên bản agent/fixtures hoặc thời gian chạy. Không thể xác nhận tuyệt đối provenance bằng config alone.
+- Bài 5 dùng snapshot hiện có; GitHub/Cloudflare được chụp ngày 09/11/2026, không phản ánh trạng thái thực tế hiện tại.
+- Một lần chạy mỗi phiên bản không chứng minh độ ổn định; không thể quy mọi thay đổi điểm cho prompt/validation, vì output model và judge có tính biến thiên.
+- Judge dùng cùng model với agent; H1 cho thấy judge có thể bỏ sót lỗi rõ trong trace.
+- Model ID là alias gemini-flash-lite-latest, không khóa phiên bản model phía provider.
+- Tools giới hạn tập incident, số update và độ dài nội dung. Validation chỉ kiểm tra ít nhất một URL incident đã quan sát xuất hiện trong answer; không xác minh mọi claim, mọi URL hay đầy đủ nguồn cho từng provider.
+- Không chỉnh fixtures, dataset, grading hoặc kết quả eval. Không phát hiện giá trị API key đã cấu hình trong hai báo cáo khi kiểm tra nội dung.
