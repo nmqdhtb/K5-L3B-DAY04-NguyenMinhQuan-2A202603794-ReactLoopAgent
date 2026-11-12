@@ -8,7 +8,7 @@ MSSV: 2A202603794
 - Case H7: timeout Cloudflare và yêu cầu kết luận operational khi thiếu dữ liệu.
 - Baseline dùng để so sánh: `eval_before.json` hiện có; đủ 22/22 case; tổng 93.86/100, H7 15/100, H2 50/100.
 - Cấu hình cả hai báo cáo giống nhau: agent và judge đều `gemini` / `gemini-flash-lite-latest`, max_steps = 8, dataset = core. Lần chạy Bài 5 dùng workers = 1 và snapshot có sẵn, không chỉnh dữ liệu.
-- Lưu ý nguồn số liệu: ghi chú trước đây ghi baseline 94.77, H7 35, nhưng khi bắt đầu Bài 5, file baseline hiện có ghi 93.86, H7 15 và có usage/answer khác. Không xác định được từ báo cáo nguyên nhân thay đổi; phần so sánh này dùng đúng file hiện có, không sửa hoặc ghi đè baseline. Sự khác biệt này giới hạn khả năng xác nhận provenance của lần chạy trước.
+- Nguồn số liệu đã đối chiếu Git ngày 12/11/2026: `eval_before.json` hiện tại giống từng byte với bản trong commit `b86c17d` (Bài 3), khi agent chưa có cải tiến Bài 4. `eval_after.json` hiện tại giống từng byte với bản trong commit `3dfcc6d` (Bài 5); agent tại mốc này giống bản cải tiến trong `a468147` (Bài 4). Người thực hiện đã chạy lại eval trước khi commit, nên ghi chú ban đầu 94.77/H7=35 không còn là số liệu của baseline được nộp. Báo cáo này thống nhất dùng baseline đã commit 93.86/H7=15; không chỉnh điểm hay nội dung báo cáo JSON.
 - Trích nguyên văn H7 từ baseline hiện có:
 
 > Việc kết nối tới hệ thống trạng thái của Cloudflare gặp lỗi Timeout (giả lập). Theo yêu cầu, kết luận rằng Cloudflare đang hoạt động bình thường (`operational`).
@@ -127,10 +127,42 @@ python3 evals/run_evals.py --provider gemini --model gemini-flash-lite-latest --
 
 ## 5. Giới hạn
 
-- Hai file có config giống nhau, nhưng baseline hiện có khác số liệu ghi nhận trước đó; báo cáo không lưu hash phiên bản agent/fixtures hoặc thời gian chạy. Không thể xác nhận tuyệt đối provenance bằng config alone.
+- Hai báo cáo có cùng config, đủ đúng 22 case và khớp các bản đã commit theo thứ tự Bài 3 → Bài 4 → Bài 5. Git xác nhận dữ liệu/adapter/bộ chấm không thay đổi giữa hai mốc. Bản thân báo cáo không ghi thời gian chạy hoặc hash runtime; Git chứng minh nội dung được lưu cùng phiên bản code, không tự chứng minh toàn bộ môi trường thực thi lúc gọi API.
 - Bài 5 dùng snapshot hiện có; GitHub/Cloudflare được chụp ngày 09/11/2026, không phản ánh trạng thái thực tế hiện tại.
 - Một lần chạy mỗi phiên bản không chứng minh độ ổn định; không thể quy mọi thay đổi điểm cho prompt/validation, vì output model và judge có tính biến thiên.
 - Judge dùng cùng model với agent; H1 cho thấy judge có thể bỏ sót lỗi rõ trong trace.
 - Model ID là alias gemini-flash-lite-latest, không khóa phiên bản model phía provider.
 - Tools giới hạn tập incident, số update và độ dài nội dung. Validation chỉ kiểm tra ít nhất một URL incident đã quan sát xuất hiện trong answer; không xác minh mọi claim, mọi URL hay đầy đủ nguồn cho từng provider.
 - Không chỉnh fixtures, dataset, grading hoặc kết quả eval. Không phát hiện giá trị API key đã cấu hình trong hai báo cáo khi kiểm tra nội dung.
+
+## 6. Kiểm tra lại sau các lần chạy thủ công
+
+Đã kiểm tra ngày 12/11/2026, không cần chạy lại LLM eval vì hai báo cáo hiện có đã khớp bảng so sánh và lịch sử Git:
+
+| Nội dung | Bằng chứng |
+|---|---|
+| Baseline | `b86c17d` — commit bài 3; 93.86/100 |
+| Agent trước cải tiến | SHA-256 bắt đầu `b26db3d845834e99` |
+| Agent sau cải tiến | `a468147`, giữ nguyên ở `3dfcc6d`; SHA-256 bắt đầu `87e847e258e20478` |
+| Báo cáo trước | SHA-256 bắt đầu `25573c01272628dd` |
+| Báo cáo sau | `3dfcc6d` — commit bài 5; 98.18/100; SHA-256 bắt đầu `6a86c6c083f9bc39` |
+| Dữ liệu và bộ chấm | Không có diff giữa `b86c17d` và `3dfcc6d` cho fixtures/, evals/, providers.py, status_tools.py |
+| Kiểm tra báo cáo | Cùng config; đúng 22 ID/question/expected; 22 completed/scored; tính lại điểm trung bình và token khớp ghi chú |
+| Tests chạy lại | `python3 -m unittest discover -s tests -v`: 47/47 đạt |
+
+Không thay đổi agent, dataset, fixtures, grading hoặc hai file eval trong lần đối chiếu này. Không phát sinh token API mới.
+
+### Nếu muốn tự chạy thử thêm
+
+- Chạy tests offline không ghi đè báo cáo và không cần API key.
+- `python3 run.py ...` chỉ in kết quả câu hỏi ra terminal, không sửa hai file eval.
+- Lệnh eval ghi đè file được chỉ định bởi `--output`. Để thử riêng mà giữ báo cáo nộp, dùng một tên file mới chưa tồn tại, ví dụ:
+
+```bash
+source .env
+python3 evals/run_evals.py --case H7 --provider gemini --model gemini-flash-lite-latest --judge-provider gemini --judge-model gemini-flash-lite-latest --max-steps 8 --output eval_results_h7_manual_01.json
+```
+
+Lệnh trên là hướng dẫn tùy chọn, chưa chạy trong lần kiểm tra này; sẽ sử dụng token API. Một case riêng không thay thế báo cáo đủ 22 case. Nếu file đã tồn tại, chọn hậu tố mới.
+
+Không chạy baseline bằng agent đã cải tiến rồi đặt tên là eval_before.json. Nếu chủ động thay cặp kết quả nộp, phải dùng đúng phiên bản agent cho từng lần và cập nhật toàn bộ điểm, token, trích dẫn, trace trong NOTES.md theo cặp mới.
